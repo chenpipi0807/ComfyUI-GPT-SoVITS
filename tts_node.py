@@ -599,16 +599,16 @@ class GSVTTSNode:
         SoVITS_names, GPT_names = get_weights_names(GPT_weight_root, SoVITS_weight_root)
         return {
             "required":{
-                "text_dict": ("TEXTDICT",),
-                "prompt_text_dict":("TEXTDICT",),
-                "prompt_audio":("AUDIO",),
-                "config":("CONFIG",),
-                "GPT_weight":(GPT_names,),
-                "SoVITS_weight":(SoVITS_names,),
-                "how_to_cut":([i18n("不切"), i18n("凑四句一切"), i18n("凑50字一切"), i18n("按中文句号。切"), i18n("按英文句号.切"), i18n("按标点符号切"), ],{
+                i18n("目标文本"): ("TEXTDICT",),
+                i18n("参考文本"): ("TEXTDICT",),
+                i18n("参考音频"): ("AUDIO",),
+                i18n("配置"): ("CONFIG",),
+                i18n("GPT模型"): (GPT_names,),
+                i18n("SoVITS模型"): (SoVITS_names,),
+                i18n("切分方式"): ([i18n("不切"), i18n("凑四句一切"), i18n("凑50字一切"), i18n("按中文句号。切"), i18n("按英文句号.切"), i18n("按标点符号切"), ],{
                     "default": i18n("凑四句一切")
                 }),
-                "speed":("FLOAT",{
+                i18n("语速"): ("FLOAT",{
                     "min": 0.6,
                     "max":1.65,
                     "step":0.05,
@@ -616,14 +616,14 @@ class GSVTTSNode:
                     "display":"slider",
                     "default": 1.0
                 }),
-                "top_k":("INT",{
+                i18n("采样数量"): ("INT",{
                     "min": 1,
                     "max":100,
                     "step":1,
                     "display":"slider",
                     "default": 15
                 }),
-                "top_p":("FLOAT",{
+                i18n("采样概率"): ("FLOAT",{
                     "min": 0.,
                     "max":1.,
                     "step":0.05,
@@ -631,7 +631,7 @@ class GSVTTSNode:
                     "display":"slider",
                     "default": 1.0
                 }),
-                "temperature":("FLOAT",{
+                i18n("温度"): ("FLOAT",{
                     "min": 0.,
                     "max":1.,
                     "step":0.05,
@@ -647,9 +647,19 @@ class GSVTTSNode:
 
     CATEGORY = "AIFSH_GPT-SoVITS"
 
-    def tts(self,text_dict,prompt_text_dict,prompt_audio,
-            config,GPT_weight,SoVITS_weight,how_to_cut,
-            speed,top_k,top_p,temperature):
+    def tts(self, **kwargs):
+        # 获取参数（支持中英文参数名）
+        text_dict = kwargs.get(i18n("目标文本"), kwargs.get("text_dict"))
+        prompt_text_dict = kwargs.get(i18n("参考文本"), kwargs.get("prompt_text_dict"))
+        prompt_audio = kwargs.get(i18n("参考音频"), kwargs.get("prompt_audio"))
+        config = kwargs.get(i18n("配置"), kwargs.get("config"))
+        GPT_weight = kwargs.get(i18n("GPT模型"), kwargs.get("GPT_weight"))
+        SoVITS_weight = kwargs.get(i18n("SoVITS模型"), kwargs.get("SoVITS_weight"))
+        how_to_cut = kwargs.get(i18n("切分方式"), kwargs.get("how_to_cut"))
+        speed = kwargs.get(i18n("语速"), kwargs.get("speed"))
+        top_k = kwargs.get(i18n("采样数量"), kwargs.get("top_k"))
+        top_p = kwargs.get(i18n("采样概率"), kwargs.get("top_p"))
+        temperature = kwargs.get(i18n("温度"), kwargs.get("temperature"))
         global ssl_model,is_half,tokenizer,bert_model
         
         is_half = config['is_half']

@@ -41,14 +41,24 @@ class DistributedBucketSampler(Sampler[T_co]):
     ) -> None:
         if num_replicas is None:
             if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size() if torch.cuda.is_available() else 1
+                num_replicas = 1  # 如果分布式不可用，设置为1
+            else:
+                try:
+                    num_replicas = dist.get_world_size() if torch.cuda.is_available() else 1
+                except ValueError:  # 处理未初始化的分布式环境
+                    num_replicas = 1
         if rank is None:
             if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank() if torch.cuda.is_available() else 0
-            if torch.cuda.is_available():
-                torch.cuda.set_device(rank)
+                rank = 0  # 如果分布式不可用，设置为0
+            else:
+                try:
+                    rank = dist.get_rank() if torch.cuda.is_available() else 0
+                    if torch.cuda.is_available():
+                        torch.cuda.set_device(rank)
+                except ValueError:  # 处理未初始化的分布式环境
+                    rank = 0
+                    if torch.cuda.is_available():
+                        torch.cuda.set_device(rank)
         if rank >= num_replicas or rank < 0:
             raise ValueError(
                 "Invalid rank {}, rank should be in the interval"

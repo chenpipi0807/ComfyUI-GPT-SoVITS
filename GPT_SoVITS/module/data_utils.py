@@ -11,7 +11,20 @@ from tqdm import tqdm
 from module import commons
 from module.mel_processing import spectrogram_torch
 from text import cleaned_text_to_sequence
-from utils import load_wav_to_torch, load_filepaths_and_text
+# 修复导入路径问题
+import sys
+import os
+
+# 直接定义需要的函数
+def load_wav_to_torch(full_path):
+    import librosa
+    data, sampling_rate = librosa.load(full_path, sr=None)
+    return torch.FloatTensor(data), sampling_rate
+
+def load_filepaths_and_text(filename, split="|"):
+    with open(filename, encoding="utf-8") as f:
+        filepaths_and_text = [line.strip().split(split) for line in f]
+    return filepaths_and_text
 import torch.nn.functional as F
 from functools import lru_cache
 import requests

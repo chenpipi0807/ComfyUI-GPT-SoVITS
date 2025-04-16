@@ -6,8 +6,184 @@ parent_dir = os.path.dirname(now_dir)
 sys.path.append(parent_dir)
 sys.path.append(now_dir)
 
-import utils
-hps = utils.get_hparams(stage=2)
+# 直接定义get_hparams函数避免导入问题
+import json
+import argparse
+import os
+
+class HParams:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            if type(v) == dict:
+                v = HParams(**v)
+            self[k] = v
+
+    def keys(self):
+        return self.__dict__.keys()
+
+    def items(self):
+        return self.__dict__.items()
+
+    def values(self):
+        return self.__dict__.values()
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        return setattr(self, key, value)
+
+    def __contains__(self, key):
+        return key in self.__dict__
+
+    def __repr__(self):
+        return self.__dict__.__repr__()
+
+def get_hparams(stage=2):
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        default="./configs/s2.json",
+        help="JSON file for configuration"
+    )
+    parser.add_argument(
+        "-p", "--pretrain", type=str, required=False, default=None, help="pretrain dir"
+    )
+    parser.add_argument(
+        "-rs",
+        "--resume_step",
+        type=int,
+        required=False,
+        default=None,
+        help="resume step",
+    )
+
+    args = parser.parse_args()
+
+    config_path = args.config
+    with open(config_path, "r") as f:
+        data = f.read()
+    config = json.loads(data)
+
+    hparams = HParams(**config)
+    hparams.pretrain = args.pretrain
+    hparams.resume_step = args.resume_step
+    if stage == 1:
+        model_dir = hparams.s1_ckpt_dir
+    else:
+        model_dir = hparams.s2_ckpt_dir
+    config_save_path = os.path.join(model_dir, "config.json")
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    with open(config_save_path, "w") as f:
+        f.write(data)
+    return hparams
+
+# 定义get_logger函数
+def get_logger(model_dir, filename="train.log"):
+    logger = logging.getLogger(os.path.basename(model_dir))
+    logger.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter("%(asctime)s\t%(name)s\t%(levelname)s\t%(message)s")
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    h = logging.FileHandler(os.path.join(model_dir, filename))
+    h.setLevel(logging.DEBUG)
+    h.setFormatter(formatter)
+    logger.addHandler(h)
+    return logger
+
+# 定义latest_checkpoint_path
+def latest_checkpoint_path(dir_path, regex="G_*.pth"):
+    f_list = glob.glob(os.path.join(dir_path, regex))
+    f_list.sort(key=lambda f: int("".join(filter(str.isdigit, f))))
+    x = f_list[-1]
+    print(x)
+    return x
+
+# 定义plot_spectrogram_to_numpy
+def plot_spectrogram_to_numpy(spectrogram):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pylab as plt
+    import numpy as np
+
+    fig, ax = plt.subplots(figsize=(10, 2))
+    im = ax.imshow(spectrogram, aspect="auto", origin="lower", interpolation="none")
+    plt.colorbar(im, ax=ax)
+    plt.xlabel("Frames")
+    plt.ylabel("Channels")
+    plt.tight_layout()
+
+    fig.canvas.draw()
+    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    plt.close()
+    return data
+
+# 定义load_checkpoint
+def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
+    assert os.path.isfile(checkpoint_path)
+    checkpoint_dict = torch.load(checkpoint_path, map_location="cpu")
+    iteration = checkpoint_dict["iteration"]
+    learning_rate = checkpoint_dict["learning_rate"]
+    if optimizer is not None and not skip_optimizer and checkpoint_dict["optimizer"] is not None:
+        optimizer.load_state_dict(checkpoint_dict["optimizer"])
+    saved_state_dict = checkpoint_dict["model"]
+    if hasattr(model, "module"):
+        state_dict = model.module.state_dict()
+    else:
+        state_dict = model.state_dict()
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        try:
+            new_state_dict[k] = saved_state_dict[k]
+            assert saved_state_dict[k].shape == v.shape, (saved_state_dict[k].shape, v.shape)
+        except:
+            print(f"error, {k} is not in the checkpoint")
+            new_state_dict[k] = v
+    if hasattr(model, "module"):
+        model.module.load_state_dict(new_state_dict)
+    else:
+        model.load_state_dict(new_state_dict)
+    print("load ")
+    print(f"Loaded checkpoint '{checkpoint_path}' (iteration {iteration})")
+    return model, optimizer, learning_rate, iteration
+
+# 定义save_checkpoint
+def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path):
+    print(f"Saving model and optimizer state at iteration {iteration} to {checkpoint_path}")
+    if hasattr(model, "module"):
+        state_dict = model.module.state_dict()
+    else:
+        state_dict = model.state_dict()
+    torch.save({
+        "model": state_dict,
+        "iteration": iteration,
+        "optimizer": optimizer.state_dict(),
+        "learning_rate": learning_rate,
+    }, checkpoint_path)
+
+# 定义summarize
+def summarize(writer, global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
+    for k, v in scalars.items():
+        writer.add_scalar(k, v, global_step)
+    for k, v in histograms.items():
+        writer.add_histogram(k, v, global_step)
+    for k, v in images.items():
+        writer.add_image(k, v, global_step, dataformats="HWC")
+    for k, v in audios.items():
+        writer.add_audio(k, v, global_step, audio_sampling_rate)
+
+# 使用自定义实现
+hps = get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 import torch
 from torch.nn import functional as F
@@ -18,7 +194,9 @@ import torch.distributed as dist, traceback
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
-import logging, traceback
+import glob
+import logging
+import traceback
 
 logging.getLogger("matplotlib").setLevel(logging.INFO)
 logging.getLogger("h5py").setLevel(logging.INFO)
@@ -52,81 +230,44 @@ device = "cpu"  # cuda以外的设备，等mps优化后加入
 
 
 def main():
-
-    if torch.cuda.is_available():
-        n_gpus = torch.cuda.device_count()
-    else:
-        n_gpus = 1
+    n_gpus = torch.cuda.device_count()
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(randint(20000, 55555))
-
-    mp.spawn(
-        run,
-        nprocs=n_gpus,
-        args=(
-            n_gpus,
-            hps,
-        ),
-    )
-
+    os.environ["MASTER_PORT"] = "12244"
+    
+    print(f"使用单GPU训练，检测到 {n_gpus} 个可用GPU")     
+    
+    # 直接运行单进程版本，不使用分布式训练避免libuv问题
+    run(0, 1, hps)
 
 def run(rank, n_gpus, hps):
     global global_step
     if rank == 0:
-        logger = utils.get_logger(hps.data.exp_dir)
+        logger = get_logger(hps.data.exp_dir)
         logger.info(hps)
-        # utils.check_git_hash(hps.s2_ckpt_dir)
+        # check_git_hash(hps.s2_ckpt_dir)
         writer = SummaryWriter(log_dir=hps.s2_ckpt_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.s2_ckpt_dir, "eval"))
 
-    dist.init_process_group(
-        backend = "gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
-        init_method="env://",
-        world_size=n_gpus,
-        rank=rank,
-    )
+    # 在单GPU模式下，直接设置随机种子和设备
     torch.manual_seed(hps.train.seed)
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
 
     train_dataset = TextAudioSpeakerLoader(hps.data)  ########
-    train_sampler = DistributedBucketSampler(
-        train_dataset,
-        hps.train.batch_size,
-        [
-            32,
-            300,
-            400,
-            500,
-            600,
-            700,
-            800,
-            900,
-            1000,
-            1100,
-            1200,
-            1300,
-            1400,
-            1500,
-            1600,
-            1700,
-            1800,
-            1900,
-        ],
-        num_replicas=n_gpus,
-        rank=rank,
-        shuffle=True,
-    )
+    
+    # 使用普通的批量采样器而不是分布式的
     collate_fn = TextAudioSpeakerCollate()
+    
+    # 单GPU模式下的DataLoader配置
     train_loader = DataLoader(
         train_dataset,
-        num_workers=6,
-        shuffle=False,
+        batch_size=hps.train.batch_size,
+        num_workers=4,
+        shuffle=True,
         pin_memory=True,
         collate_fn=collate_fn,
-        batch_sampler=train_sampler,
-        persistent_workers=True,
-        prefetch_factor=4,
+        drop_last=True,
+        persistent_workers=False,
     )
     # if rank == 0:
     #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
@@ -190,24 +331,27 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
+    # 单GPU模式下，直接使用普通模型
     if torch.cuda.is_available():
-        net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
-        net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
+        net_g = net_g.cuda(rank)
+        net_d = net_d.cuda(rank)
     else:
         net_g = net_g.to(device)
         net_d = net_d.to(device)
+    
+    print("模型已初始化完成，开始训练...")
 
     try:  # 如果能加载自动resume
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path("%s/logs_s2" % hps.data.exp_dir, "D_*.pth"),
+        _, _, _, epoch_str = load_checkpoint(
+            latest_checkpoint_path("%s/logs_s2" % hps.data.exp_dir, "D_*.pth"),
             net_d,
             optim_d,
         )  # D多半加载没事
         if rank == 0:
             logger.info("loaded D")
         # _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g,load_opt=0)
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path("%s/logs_s2" % hps.data.exp_dir, "G_*.pth"),
+        _, _, _, epoch_str = load_checkpoint(
+            latest_checkpoint_path("%s/logs_s2" % hps.data.exp_dir, "G_*.pth"),
             net_g,
             optim_g,
         )
@@ -221,25 +365,37 @@ def run(rank, n_gpus, hps):
         if hps.train.pretrained_s2G != ""and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
             if rank == 0:
                 logger.info("loaded pretrained %s" % hps.train.pretrained_s2G)
-            print(
-                net_g.module.load_state_dict(
-                    torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
-                    strict=False,
-                ) if torch.cuda.is_available() else net_g.load_state_dict(
-                    torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
-                    strict=False,
-                )
-            )  ##测试不加载优化器
+            # 在单GPU模式下正确加载模型权重
+            try:
+                if hasattr(net_g, "module"):
+                    print(net_g.module.load_state_dict(
+                        torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
+                        strict=False,
+                    ))
+                else:
+                    print(net_g.load_state_dict(
+                        torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
+                        strict=False,
+                    ))
+            except Exception as e:
+                print(f"加载G预训练权重时出错: {e}")
+                pass
         if hps.train.pretrained_s2D != ""and hps.train.pretrained_s2D != None and os.path.exists(hps.train.pretrained_s2D):
             if rank == 0:
                 logger.info("loaded pretrained %s" % hps.train.pretrained_s2D)
-            print(
-                net_d.module.load_state_dict(
-                    torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"]
-                ) if torch.cuda.is_available() else net_d.load_state_dict(
-                    torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"]
-                )
-            )
+            # 在单GPU模式下正确加载判别器权重
+            try:
+                if hasattr(net_d, "module"):
+                    print(net_d.module.load_state_dict(
+                        torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"]
+                    ))
+                else:
+                    print(net_d.load_state_dict(
+                        torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"]
+                    ))
+            except Exception as e:
+                print(f"加载D预训练权重时出错: {e}")
+                pass
 
     # scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
     # scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
@@ -298,7 +454,7 @@ def train_and_evaluate(
     if writers is not None:
         writer, writer_eval = writers
 
-    train_loader.batch_sampler.set_epoch(epoch)
+    # 单GPU模式下无需设置批次采样器的epoch
     global global_step
 
     net_g.train()
@@ -433,20 +589,20 @@ def train_and_evaluate(
                 # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
                 # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
                 image_dict = {
-                    "slice/mel_org": utils.plot_spectrogram_to_numpy(
+                    "slice/mel_org": plot_spectrogram_to_numpy(
                         y_mel[0].data.cpu().numpy()
                     ),
-                    "slice/mel_gen": utils.plot_spectrogram_to_numpy(
+                    "slice/mel_gen": plot_spectrogram_to_numpy(
                         y_hat_mel[0].data.cpu().numpy()
                     ),
-                    "all/mel": utils.plot_spectrogram_to_numpy(
+                    "all/mel": plot_spectrogram_to_numpy(
                         mel[0].data.cpu().numpy()
                     ),
-                    "all/stats_ssl": utils.plot_spectrogram_to_numpy(
+                    "all/stats_ssl": plot_spectrogram_to_numpy(
                         stats_ssl[0].data.cpu().numpy()
                     ),
                 }
-                utils.summarize(
+                summarize(
                     writer=writer,
                     global_step=global_step,
                     images=image_dict,
@@ -455,7 +611,7 @@ def train_and_evaluate(
         global_step += 1
     if epoch % hps.train.save_every_epoch == 0 and rank == 0:
         if hps.train.if_save_latest == 0:
-            utils.save_checkpoint(
+            save_checkpoint(
                 net_g,
                 optim_g,
                 hps.train.learning_rate,
@@ -464,7 +620,7 @@ def train_and_evaluate(
                     "%s/logs_s2" % hps.data.exp_dir, "G_{}.pth".format(global_step)
                 ),
             )
-            utils.save_checkpoint(
+            save_checkpoint(
                 net_d,
                 optim_d,
                 hps.train.learning_rate,
@@ -474,7 +630,7 @@ def train_and_evaluate(
                 ),
             )
         else:
-            utils.save_checkpoint(
+            save_checkpoint(
                 net_g,
                 optim_g,
                 hps.train.learning_rate,
@@ -483,7 +639,7 @@ def train_and_evaluate(
                     "%s/logs_s2" % hps.data.exp_dir, "G_{}.pth".format(233333333333)
                 ),
             )
-            utils.save_checkpoint(
+            save_checkpoint(
                 net_d,
                 optim_d,
                 hps.train.learning_rate,

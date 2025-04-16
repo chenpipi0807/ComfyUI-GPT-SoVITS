@@ -130,9 +130,10 @@ def main(args):
         devices=-1 if torch.cuda.is_available() else 1,
         benchmark=False,
         fast_dev_run=False,
-        strategy = DDPStrategy(
-            process_group_backend="nccl" if platform.system() != "Windows" else "gloo"
-        ) if torch.cuda.is_available() else "auto",
+        # 禁用 Windows 上的分布式训练以避免 libuv 错误
+        strategy = "auto" if platform.system() == "Windows" else (
+            DDPStrategy(process_group_backend="nccl") if torch.cuda.is_available() else "auto"
+        ),
         precision=config["train"]["precision"],
         logger=logger,
         num_sanity_val_steps=0,

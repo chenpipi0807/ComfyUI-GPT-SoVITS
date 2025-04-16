@@ -34,3 +34,7 @@ opencc==1.1.1; sys_platform == 'linux'
 python_mecab_ko; sys_platform != 'win32'
 translators
 srt
+faster_whisper
+cn2an
+ffmpeg-python
+wordsegment
