@@ -94,11 +94,58 @@ class DictToAttrRecursive(dict):
             raise AttributeError(f"Attribute {item} not found")
 
 import GPT_SoVITS.utils as utils
+
+# 定义 HParams 类用于模型加载
+class HParams:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            if type(v) == dict:
+                v = HParams(**v)
+            self[k] = v
+
+    def keys(self):
+        return self.__dict__.keys()
+
+    def items(self):
+        return self.__dict__.items()
+
+    def values(self):
+        return self.__dict__.values()
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        return setattr(self, key, value)
+
+    def __contains__(self, key):
+        return key in self.__dict__
+
+    def __repr__(self):
+        return self.__dict__.__repr__()
+        
 def change_sovits_weights(sovits_path):
     global vq_model, hps, version, dict_language
     comfyui_utils = sys.modules['utils']
     sys.modules['utils'] = utils
-    dict_s2 = torch.load(sovits_path, map_location="cpu")
+    
+    # 添加 HParams 到全局命名空间
+    import __main__
+    setattr(__main__, 'HParams', HParams)
+    
+    # 添加 HParams 到安全全局变量
+    try:
+        from torch.serialization import add_safe_globals
+        add_safe_globals([HParams])
+    except ImportError:
+        # 如果是旧版本的 PyTorch，没有这个函数
+        pass
+    
+    # 加载模型
+    dict_s2 = torch.load(sovits_path, map_location="cpu", weights_only=False)
     sys.modules['utils'] = comfyui_utils
     hps = dict_s2["config"]
     hps = DictToAttrRecursive(hps)
@@ -136,7 +183,21 @@ from AR.models.t2s_lightning_module import Text2SemanticLightningModule
 def change_gpt_weights(gpt_path):
     global hz, max_sec, t2s_model, config
     hz = 50
-    dict_s1 = torch.load(gpt_path, map_location="cpu")
+    
+    # 添加 HParams 到全局命名空间
+    import __main__
+    setattr(__main__, 'HParams', HParams)
+    
+    # 添加 HParams 到安全全局变量
+    try:
+        from torch.serialization import add_safe_globals
+        add_safe_globals([HParams])
+    except ImportError:
+        # 如果是旧版本的 PyTorch，没有这个函数
+        pass
+    
+    # 添加 weights_only=False 参数以兼容 PyTorch 2.6
+    dict_s1 = torch.load(gpt_path, map_location="cpu", weights_only=False)
     config = dict_s1["config"]
     max_sec = config["data"]["max_sec"]
     t2s_model = Text2SemanticLightningModule(config, "****", is_train=False)
